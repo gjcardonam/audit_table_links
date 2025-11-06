@@ -2,20 +2,37 @@ pipeline {
   agent {
     docker {
       image 'python:3.11-slim'
-      // args '-u'  // <- QUITAR: causaba doble -u
       reuseNode true
     }
   }
+
   options { timestamps() }
+
   parameters {
-    choice(name: 'CONFIG', choices: ['configs/dev.json','configs/multi.json'], description: 'Config JSON')
+    // Un solo config para QA y DEV
+    string(
+      name: 'CONFIG',
+      defaultValue: 'config.json',
+      description: 'Ruta al JSON de configuración del auditor de links en tablas'
+    )
   }
-  environment { PYTHONUNBUFFERED = '1' }
+
+  environment {
+    PYTHONUNBUFFERED = '1'
+
+    // En este pipeline (prod/CI) NO queremos generar JSON/CSV:
+    WRITE_JSON = '0'
+    WRITE_CSV  = '0'
+  }
 
   stages {
     stage('Checkout') {
-      steps { deleteDir(); checkout scm }
+      steps {
+        deleteDir()
+        checkout scm
+      }
     }
+
     stage('Deps') {
       steps {
         sh '''
@@ -24,17 +41,30 @@ pipeline {
         '''
       }
     }
+
     stage('Run audit') {
       steps {
         withCredentials([
-          usernamePassword(credentialsId: 'GRAFANA_CREDS', usernameVariable: 'GRAFANA_USERNAME', passwordVariable: 'GRAFANA_PASSWORD'),
-          usernamePassword(credentialsId: 'PG_CREDS',      usernameVariable: 'DB_USER',          passwordVariable: 'DB_PASSWORD')
+          usernamePassword(
+            credentialsId: 'GRAFANA_CREDS',
+            usernameVariable: 'GRAFANA_USERNAME',
+            passwordVariable: 'GRAFANA_PASSWORD'
+          ),
+          usernamePassword(
+            credentialsId: 'PG_CREDS',
+            usernameVariable: 'DB_USER',
+            passwordVariable: 'DB_PASSWORD'
+          )
         ]) {
-          sh 'python audit_nav_links.py -c ${CONFIG} | tee run.log'
+          sh '''
+            echo "Usando config: ${CONFIG}"
+            python audit_table_links.py -c ${CONFIG} | tee run.log
+          '''
         }
       }
     }
   }
+
   post {
     always {
       archiveArtifacts artifacts: 'run.log', allowEmptyArchive: true

@@ -8,8 +8,17 @@
       "Production History": "Production History"
     }
   },
-  "db": { "enabled": true, "schema": "public" },
+  "db": {
+    "enabled": true,
+    "schema": "public"
+  },
   "progress": { "bar_width": 46 },
+
+  "output": {
+    "write_json": true,
+    "write_csv": true
+  },
+
   "environments": [
     {
       "name": "qa",

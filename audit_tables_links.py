@@ -5,43 +5,21 @@ Audita LINKS dentro de TABLAS (Grafana "table" panels) para múltiples ambientes
 - Recorre todas las organizations (companies) y todos los dashboards en la carpeta principal de cada compañía.
 - Encuentra todos los paneles de tipo tabla y extrae los links definidos en field overrides (properties.id == "links").
 - Valida:
-    1) Que las URLs NO tengan parámetros de query (nada después de '?').
+    1) Que los parámetros de query sean sólo los permitidos:
+       - var-nodeId=${__value.raw}
+       - from=<cualquiera>
+       - to=<cualquiera>
     2) Que, para ciertos títulos de botón, el UID del dashboard en la URL coincida con el UID del dashboard esperado
        (resuelto por nombre y dentro de la carpeta principal de la compañía).
-- Exporta JSON/CSV por ambiente y (opcional) persiste hallazgos en PostgreSQL.
+- Exporta JSON/CSV por ambiente (controlable con WRITE_JSON/WRITE_CSV) y
+  (opcional) persiste hallazgos en PostgreSQL.
 
-Ejemplo de config.json (mínimo):
-{
-  "environments": [
-    {
-      "name": "dev",
-      "grafana": {
-        "url": "https://grafana-dev.example.com",
-        "username": "user",
-        "password": "pass",
-        "verify_ssl": true,
-        "companies_file": "companies.json"
-      }
-    }
-  ],
-  "rules": {
-    "link_targets": {
-      "Single-Axis": "Real Time: Trends",
-      "Multi-Axis": "Real Time: Multi-axis",
-      "Health Check": "Health Check",
-      "Production History": "Production History"
-    },
-    "ignore_folders": ["Test"]
-  },
-  "db": { "enabled": false, "schema": "public" },
-  "progress": { "bar_width": 46 }
-}
-
-companies.json (ejemplo):
-[
-  {"id": 1, "name": "Akakus"},
-  {"id": 2, "name": "Apache"}
-]
+Control de salidas:
+- En config.json:
+  "output": { "write_json": true, "write_csv": true }
+- Overrides por entorno:
+  WRITE_JSON = 0|1|false|true|no|yes
+  WRITE_CSV  = 0|1|false|true|no|yes
 """
 
 import os, sys, json, time, uuid, argparse
@@ -90,14 +68,12 @@ DEFAULT_LINK_TARGETS = {
     "Production History": "Production History",
 }
 
-
 def _bool_env_default(val, default_true=True):
     if isinstance(val, bool):
         return val
     if val is None:
         return default_true
     return str(val).lower() not in {"0", "false", "no"}
-
 
 def _resolve_grafana_fields(env_block: dict) -> Dict[str, Any]:
     g = env_block.get("grafana", {}) if env_block else {}
@@ -118,7 +94,6 @@ def _resolve_grafana_fields(env_block: dict) -> Dict[str, Any]:
         "companies_file": companies_file,
     }
 
-
 def _resolve_rules(cfg_rules: dict) -> Dict[str, Any]:
     r = cfg_rules or {}
     link_targets = r.get("link_targets") or DEFAULT_LINK_TARGETS
@@ -127,7 +102,6 @@ def _resolve_rules(cfg_rules: dict) -> Dict[str, Any]:
         "link_targets": link_targets,
         "ignore_folders": ignore_folders,
     }
-
 
 def _resolve_db(cfg_db: dict) -> Dict[str, Any]:
     d = cfg_db or {}
@@ -140,7 +114,6 @@ def _resolve_db(cfg_db: dict) -> Dict[str, Any]:
         "user": os.getenv("DB_USER", d.get("user", "")),
         "password": os.getenv("DB_PASSWORD", d.get("password", "")),
     }
-
 
 def build_config(args) -> Dict[str, Any]:
     # .env opcional
@@ -170,7 +143,24 @@ def build_config(args) -> Dict[str, Any]:
     db = _resolve_db(cfg.get("db", {}))
     progress = {"bar_width": int(cfg.get("progress", {}).get("bar_width", 46))}
 
-    return {"environments": envs_resolved, "rules": rules, "db": db, "progress": progress}
+    # --- output config + overrides por entorno
+    out_cfg = cfg.get("output", {})
+    env_write_json = os.getenv("WRITE_JSON")
+    env_write_csv  = os.getenv("WRITE_CSV")
+
+    if env_write_json is not None:
+        write_json = _bool_env_default(env_write_json, True)
+    else:
+        write_json = _bool_env_default(out_cfg.get("write_json", True), True)
+
+    if env_write_csv is not None:
+        write_csv = _bool_env_default(env_write_csv, True)
+    else:
+        write_csv = _bool_env_default(out_cfg.get("write_csv", True), True)
+
+    output = {"write_json": write_json, "write_csv": write_csv}
+
+    return {"environments": envs_resolved, "rules": rules, "db": db, "progress": progress, "output": output}
 
 # ---------- grafana http ----------
 
@@ -182,25 +172,21 @@ def make_session(url: str, user: str, passwd: str, verify_ssl: bool):
     s.verify = verify_ssl
     return s, url
 
-
 def switch_organization(session: requests.Session, base_url: str, org_id: int) -> None:
     r = session.post(f"{base_url}/user/using/{org_id}")
     if r.status_code != 200:
         raise RuntimeError(f"Switch org {org_id} failed: {r.status_code} {r.text}")
-
 
 def search_folders(session: requests.Session, base_url: str, q: str) -> List[Dict[str, Any]]:
     r = session.get(f"{base_url}/search", params={"type": "dash-folder", "query": q, "limit": 5000})
     r.raise_for_status()
     return r.json() or []
 
-
 def search_dashboards_any(session: requests.Session, base_url: str) -> List[Dict[str, Any]]:
     """Busca TODOS los dashboards visibles (limit alto)"""
     r = session.get(f"{base_url}/search", params={"type": "dash-db", "limit": 5000})
     r.raise_for_status()
     return r.json() or []
-
 
 def get_dashboard(session: requests.Session, base_url: str, uid: str) -> Dict[str, Any]:
     r = session.get(f"{base_url}/dashboards/uid/{uid}")
@@ -218,13 +204,11 @@ def iter_all_panels(panels: List[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
         if isinstance(inner, list) and inner:
             yield from iter_all_panels(inner)
 
-
 def find_company_folder(session, base_url: str, company_name: str) -> Optional[Dict[str, Any]]:
     for it in search_folders(session, base_url, company_name):
         if norm(it.get("title")) == norm(company_name):
             return it
     return None
-
 
 def resolve_uid_in_company_folder(session, base_url: str, company_folder_title: str, expected_title: str) -> Optional[str]:
     r = session.get(f"{base_url}/search", params={"type": "dash-db", "query": expected_title, "limit": 5000})
@@ -233,7 +217,6 @@ def resolve_uid_in_company_folder(session, base_url: str, company_folder_title: 
         if norm(it.get("title")) == norm(expected_title) and norm(it.get("folderTitle")) == norm(company_folder_title):
             return it.get("uid")
     return None
-
 
 def build_expected_uid_map_for_company(session, base_url: str, company_name: str, expected_titles: Set[str]) -> Tuple[Optional[str], Dict[str, Optional[str]]]:
     folder = find_company_folder(session, base_url, company_name)
@@ -296,8 +279,7 @@ def validate_query_params(u: Optional[str]) -> List[str]:
             continue
         if k == "var-nodeId" and v != "${__value.raw}":
             issues.append("nodeId_value_not_allowed")
-    return list(dict.fromkeys(issues))  # dedup while preserving order
-
+    return list(dict.fromkeys(issues))  # dedup while preserving orden
 
 def extract_uid_from_grafana_url(u: str) -> Optional[str]:
     if not u:
@@ -339,7 +321,6 @@ CREATE TABLE IF NOT EXISTS {schema}.table_links_audit_violations (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );"""
 
-
 def db_connect(cfg_db: dict):
     if not psycopg2:
         raise RuntimeError("psycopg2 no está instalado y db.enabled=true")
@@ -348,13 +329,11 @@ def db_connect(cfg_db: dict):
         user=cfg_db["user"], password=cfg_db["password"]
     )
 
-
 def db_prepare(conn, schema: str):
     with conn.cursor() as cur:
         cur.execute(DDL_RUNS.format(schema=schema))
         cur.execute(DDL_VIOLS.format(schema=schema))
     conn.commit()
-
 
 def db_insert_run_start(conn, schema: str, run_id, env_name: str, orgs: int, dashboards: int):
     with conn.cursor() as cur:
@@ -364,7 +343,6 @@ def db_insert_run_start(conn, schema: str, run_id, env_name: str, orgs: int, das
         )
     conn.commit()
 
-
 def db_update_run_end(conn, schema: str, run_id, tables_checked: int, links_checked: int, viols: int, elapsed: int):
     with conn.cursor() as cur:
         cur.execute(
@@ -372,7 +350,6 @@ def db_update_run_end(conn, schema: str, run_id, tables_checked: int, links_chec
             (tables_checked, links_checked, viols, elapsed, run_id)
         )
     conn.commit()
-
 
 def db_bulk_insert_violations(conn, schema: str, run_id, viols: List[Dict[str, Any]]):
     if not viols:
@@ -403,7 +380,13 @@ def db_bulk_insert_violations(conn, schema: str, run_id, viols: List[Dict[str, A
 
 # ---------- núcleo del auditor ----------
 
-def run_for_environment(env_cfg: Dict[str, Any], rules: Dict[str, Any], db_cfg: Dict[str, Any], bar_width: int) -> Dict[str, Any]:
+def run_for_environment(
+    env_cfg: Dict[str, Any],
+    rules: Dict[str, Any],
+    db_cfg: Dict[str, Any],
+    bar_width: int,
+    output_cfg: Dict[str, Any],
+) -> Dict[str, Any]:
     g = env_cfg["grafana"]
     env_name = env_cfg["name"]
 
@@ -458,7 +441,7 @@ def run_for_environment(env_cfg: Dict[str, Any], rules: Dict[str, Any], db_cfg: 
             if norm(it.get("folderTitle")) == norm(company_folder_title)
         ] if company_folder_title else []
 
-        # por si queremos reflejar en BD cuántos dashboards se recorrieron (actualización rápida)
+        # actualizar contador de dashboards en BD
         if db_cfg["enabled"]:
             with conn.cursor() as cur:
                 cur.execute(
@@ -499,7 +482,7 @@ def run_for_environment(env_cfg: Dict[str, Any], rules: Dict[str, Any], db_cfg: 
                     url = link.get("url", "")
                     title = (link.get("title") or "").strip()
 
-                    # Regla 1: parámetros solo si son permitidos (var-nodeId=${__value.raw}, from, to)
+                    # Regla 1: parámetros sólo si son permitidos
                     issues.extend(validate_query_params(url))
 
                     # Regla 2: validar UID según botón → dashboard esperado
@@ -548,7 +531,7 @@ def run_for_environment(env_cfg: Dict[str, Any], rules: Dict[str, Any], db_cfg: 
         "summary": {
             "environment": env_name,
             "organizations": len(companies),
-            "dashboards": None,  # se informó en BD por compañía; aquí no acumulamos global por simplicidad
+            "dashboards": None,  # se informó en BD por compañía; aquí no acumulamos global
             "tables_checked": tables_checked,
             "links_checked": links_checked,
             "violations": len(violations),
@@ -558,26 +541,28 @@ def run_for_environment(env_cfg: Dict[str, Any], rules: Dict[str, Any], db_cfg: 
     }
 
     # Outputs por ambiente
-    save_json(f"table_links_audit_{env_name}.json", result)
+    if output_cfg.get("write_json", True):
+        save_json(f"table_links_audit_{env_name}.json", result)
 
-    try:
-        import csv
-        with open(f"table_links_audit_{env_name}.csv", "w", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            w.writerow([
-                "org", "dashboard", "dashboard_uid", "folder_title", "folder_id", "folder_url",
-                "panel_id", "panel_title", "matcher_id", "matcher_options",
-                "link_title", "url", "issue",
-            ])
-            for v in violations:
+    if output_cfg.get("write_csv", True):
+        try:
+            import csv
+            with open(f"table_links_audit_{env_name}.csv", "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
                 w.writerow([
-                    v.get("org"), v.get("dashboard"), v.get("dashboard_uid"),
-                    v.get("folder_title"), v.get("folder_id"), v.get("folder_url"),
-                    v.get("panel_id"), v.get("panel_title"), v.get("matcher_id"), v.get("matcher_options"),
-                    v.get("link_title"), v.get("url"), v.get("issue"),
+                    "org", "dashboard", "dashboard_uid", "folder_title", "folder_id", "folder_url",
+                    "panel_id", "panel_title", "matcher_id", "matcher_options",
+                    "link_title", "url", "issue",
                 ])
-    except Exception as e:
-        print(f"\n⚠ No se pudo escribir table_links_audit_{env_name}.csv: {e}")
+                for v in violations:
+                    w.writerow([
+                        v.get("org"), v.get("dashboard"), v.get("dashboard_uid"),
+                        v.get("folder_title"), v.get("folder_id"), v.get("folder_url"),
+                        v.get("panel_id"), v.get("panel_title"), v.get("matcher_id"), v.get("matcher_options"),
+                        v.get("link_title"), v.get("url"), v.get("issue"),
+                    ])
+        except Exception as e:
+            print(f"\n⚠ No se pudo escribir table_links_audit_{env_name}.csv: {e}")
 
     # Persistencia BD
     if db_cfg["enabled"]:
@@ -600,6 +585,7 @@ def main():
     rules = cfg["rules"]
     db_cfg = cfg["db"]
     barw = cfg["progress"]["bar_width"]
+    output_cfg = cfg["output"]
 
     all_results = {"summaries": [], "environments": {}}
 
@@ -607,15 +593,17 @@ def main():
     done = 0
 
     for env in envs:
-        res = run_for_environment(env, rules, db_cfg, barw)
+        res = run_for_environment(env, rules, db_cfg, barw, output_cfg)
         all_results["summaries"].append(res["summary"])
         all_results["environments"][env["name"]] = res
         done += 1
         progress_bar(done, total_tasks, "Ambientes", barw)
 
-    save_json("table_links_audit_all.json", all_results)
-    print("\nResumen combinado escrito en table_links_audit_all.json")
-
+    if output_cfg.get("write_json", True):
+        save_json("table_links_audit_all.json", all_results)
+        print("\nResumen combinado escrito en table_links_audit_all.json")
+    else:
+        print("\nResumen combinado NO se escribe a archivo (WRITE_JSON=false)")
 
 if __name__ == "__main__":
     main()

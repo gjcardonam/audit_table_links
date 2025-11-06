@@ -10,7 +10,11 @@
   },
   "db": {
     "enabled": true,
-    "schema": "public"
+    "host": "rds-test.cj8e8cqeonv7.us-east-2.rds.amazonaws.com",
+    "port": 5432,
+    "name": "postgres",
+    "schema": "public",
+    "user": "postgres"
   },
   "progress": { "bar_width": 46 },
 

@@ -1,0 +1,31 @@
+{
+  "rules": {
+    "ignore_folders": ["Test", "TEMPLATES GL", "TEMPLATE GL DE", "Gas lift"],
+    "link_targets": {
+      "Single-Axis": "Real Time: Trends",
+      "Multi-axis": "Real Time: Multi-axis",
+      "Health Check": "Health Check",
+      "Production History": "Production History"
+    }
+  },
+  "db": { "enabled": true, "schema": "public" },
+  "progress": { "bar_width": 46 },
+  "environments": [
+    {
+      "name": "qa",
+      "grafana": {
+        "url": "https://qa.enerview.site/api",
+        "verify_ssl": true,
+        "companies_file": "companies.qa.json"
+      }
+    },
+    {
+      "name": "dev",
+      "grafana": {
+        "url": "https://dev.enerview.site/api",
+        "verify_ssl": true,
+        "companies_file": "companies.dev.json"
+      }
+    }
+  ]
+}

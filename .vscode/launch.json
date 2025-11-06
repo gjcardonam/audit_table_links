@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python Debugger: templating_auditor",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/templating_auditor.py",
+      "args": ["-c", "configs/templating_auditor-config.json"],
+      "console": "integratedTerminal"
+    }
+  ]
+}

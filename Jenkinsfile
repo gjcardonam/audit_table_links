@@ -25,6 +25,10 @@ pipeline {
     WRITE_CSV  = '0'
   }
 
+  triggers {
+        cron('30 6 * * *')
+    }
+
   stages {
     stage('Checkout') {
       steps {

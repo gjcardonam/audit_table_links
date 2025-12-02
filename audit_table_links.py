@@ -255,31 +255,46 @@ def extract_links_from_table_panel(panel: Dict[str, Any]) -> List[Dict[str, Any]
 
 # ---------- validaciones ----------
 
-def validate_query_params(u: Optional[str]) -> List[str]:
-    """Valida la query de la URL. Reglas:
-    - Permitidos: var-nodeId=${__value.raw} (valor EXACTO), from=<cualquiera>, to=<cualquiera>
-    - Cualquier otro parámetro -> 'url_param_not_allowed'
-    - var-nodeId con valor distinto -> 'nodeId_value_not_allowed'
-    Devuelve lista de issues (vacía si todo ok).
-    """
+def validate_query_params(u: Optional[str], dashboard_title: str) -> List[str]:
+    """Valida los parámetros de la URL con reglas de negocio específicas."""
     issues: List[str] = []
     s = (u or "").strip()
     if not s:
         return issues
+    
+    # Normalización básica de URL
     parsed = urlparse(s if s.startswith("http") else ("/" + s.lstrip("/")))
     if not parsed.query:
         return issues
 
     from urllib.parse import parse_qsl
     pairs = parse_qsl(parsed.query, keep_blank_values=True)
-    allowed_keys = {"var-nodeId", "from", "to"}
+    
+    # Claves permitidas ahora incluyen 'var-var_wells'
+    allowed_keys = {"var-nodeId", "from", "to", "var-var_wells"}
+    
     for k, v in pairs:
+        # 1. Chequeo de claves prohibidas
         if k not in allowed_keys:
             issues.append("url_param_not_allowed")
             continue
-        if k == "var-nodeId" and v != "${__value.raw}":
-            issues.append("nodeId_value_not_allowed")
-    return list(dict.fromkeys(issues))  # dedup while preserving orden
+        
+        # 2. Validación específica para var-nodeId
+        if k == "var-nodeId":
+            # EXCEPCIÓN: En dashboard "Setpoints" se permite ${nodeId}
+            if dashboard_title.strip() == "Setpoints" and v == "${nodeId}":
+                continue
+            
+            # Regla por defecto
+            if v != "${__value.raw}":
+                issues.append("nodeId_value_not_allowed")
+
+        # 3. Validación nueva para var-var_wells
+        if k == "var-var_wells":
+            if v != "${__value.raw}":
+                issues.append("var_wells_value_not_allowed")
+
+    return list(dict.fromkeys(issues))
 
 def extract_uid_from_grafana_url(u: str) -> Optional[str]:
     if not u:
@@ -481,9 +496,22 @@ def run_for_environment(
 
                     url = link.get("url", "")
                     title = (link.get("title") or "").strip()
+                    dash_title = dashboard.get("title", "")
 
                     # Regla 1: parámetros sólo si son permitidos
-                    issues.extend(validate_query_params(url))
+                    issues.extend(validate_query_params(url, dash_title))
+
+                    # --- REGLA 2: Validación de TIEMPO (Daily ESP Status) ---
+                    # Si es Daily ESP Status y los links son Single/Multi Axis, EXIGIR from y to
+                    if dash_title.strip() == "Daily ESP Status":
+                        if title in ("Single-Axis", "Multi-Axis"):
+                            # Parseamos rápido para ver si están las claves
+                            parsed_q = urlparse(url if url.startswith("http") else ("/" + url.lstrip("/"))).query
+                            from urllib.parse import parse_qs
+                            q_keys = parse_qs(parsed_q).keys()
+                            
+                            if "from" not in q_keys or "to" not in q_keys:
+                                issues.append("missing_time_params")
 
                     # Regla 2: validar UID según botón → dashboard esperado
                     expected_title = (rules["link_targets"] or {}).get(title)

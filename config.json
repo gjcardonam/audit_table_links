@@ -9,12 +9,13 @@
     }
   },
   "db": {
-    "enabled": true,
+    "enabled": false,
     "host": "rds-test.cj8e8cqeonv7.us-east-2.rds.amazonaws.com",
     "port": 5432,
     "name": "postgres",
     "schema": "public",
-    "user": "postgres"
+    "user": "postgres",
+    "password": "ENV_DB_PASSWORD"
   },
   "progress": { "bar_width": 46 },
 
@@ -25,11 +26,63 @@
 
   "environments": [
     {
+      "name": "dev-firebird",
+      "grafana": {
+        "url": "https://firebird-dev.enerview.site/api",
+        "verify_ssl": true,
+        "companies_inline": [
+          { "name": "Firebird", "token": "ENV_GRAFANA_TOKEN_FIREBIRD" }
+        ]
+      }
+    },
+    {
+      "name": "dev-apache",
+      "grafana": {
+        "url": "https://apache-dev.enerview.site/api",
+        "verify_ssl": true,
+        "companies_inline": [
+          { "name": "Apache", "token": "ENV_GRAFANA_TOKEN_APACHE" }
+        ]
+      }
+    },
+    {
+      "name": "dev-chord",
+      "grafana": {
+        "url": "https://chord-dev.enerview.site/api",
+        "verify_ssl": true,
+        "companies_inline": [
+          { "name": "Chord", "token": "ENV_GRAFANA_TOKEN_CHORD" }
+        ]
+      }
+    },
+    {
+      "name": "dev-ironorchard",
+      "grafana": {
+        "url": "https://ironorchard-dev.enerview.site/api",
+        "verify_ssl": true,
+        "companies_inline": [
+          { "name": "Iron Orchard", "token": "ENV_GRAFANA_TOKEN_IRONORCHARD" }
+        ]
+      }
+    },
+    {
+      "name": "dev-permian",
+      "grafana": {
+        "url": "https://permian-dev.enerview.site/api",
+        "verify_ssl": true,
+        "companies_inline": [
+          { "name": "Permian", "token": "ENV_GRAFANA_TOKEN_PERMIAN" }
+        ]
+      }
+    },
+    {
       "name": "qa",
       "grafana": {
         "url": "https://qa.enerview.site/api",
         "verify_ssl": true,
-        "companies_file": "companies.qa.json"
+        "companies_file": "companies.qa.json",
+        "username": "ENV_GRAFANA_USER_QA", 
+        "password": "ENV_GRAFANA_PASS_QA" 
       }
     },
     {
@@ -37,7 +90,9 @@
       "grafana": {
         "url": "https://dev.enerview.site/api",
         "verify_ssl": true,
-        "companies_file": "companies.dev.json"
+        "companies_file": "companies.dev.json",
+        "username": "ENV_GRAFANA_USER_QA", 
+        "password": "ENV_GRAFANA_PASS_QA" 
       }
     }
   ]

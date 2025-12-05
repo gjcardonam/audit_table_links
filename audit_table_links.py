@@ -62,8 +62,8 @@ def norm(s: Optional[str]) -> str:
 # ---------- config ----------
 
 DEFAULT_LINK_TARGETS = {
-    "Single-Axis": "Real Time: Trends",
-    "Multi-Axis": "Real Time: Multi-axis",
+    "Single-Axis": "Real Time: Single-Axis",
+    "Multi-Axis": "Real Time: Multi-Axis",
     "Health Check": "Health Check",
     "Production History": "Production History",
 }
